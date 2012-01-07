@@ -52,78 +52,22 @@
 #include <linux/platform_device.h>
 #include <linux/miscdevice.h>
 #include <linux/device.h>
+#include <linux/slab.h>
 #include <asm/uaccess.h>
 #include <plat/dmtimer.h>
 #include <mach/hardware.h>
 #include <plat/mux.h>
 
-#define _OMAP_TIMER_STAT_OFFSET         0x18
-#define _OMAP_TIMER_INT_EN_OFFSET       0x1c
-#define _OMAP_TIMER_CTRL_OFFSET         0x24
-#define _OMAP_TIMER_CAPTURE_OFFSET      0x3c
-#define _OMAP_TIMER_IF_CTRL_OFFSET      0x40
-#define _OMAP_TIMER_CAPTURE2_OFFSET     0x44    /* TCAR2, 34xx only */
-
-#define OMAP_TIMER_CTRL_REG     (_OMAP_TIMER_CTRL_OFFSET | (WP_TCLR << WPSHIFT))
-#define WP_TCLR                 (1 << 0)
-/* register offsets with the write pending bit encoded */
-#define WPSHIFT                 16
-#define _OMAP_TIMER_WRITE_PEND_OFFSET   0x34
-#define         WP_NONE         0       /* no write pending bit */
-#define OMAP_TIMER_STAT_REG             (_OMAP_TIMER_STAT_OFFSET \
-                                                | (WP_NONE << WPSHIFT))
-#define OMAP_TIMER_WRITE_PEND_REG       (_OMAP_TIMER_WRITE_PEND_OFFSET \
-                                                 | (WP_NONE << WPSHIFT))
-#define OMAP_TIMER_INT_EN_REG           (_OMAP_TIMER_INT_EN_OFFSET \
-                                                 | (WP_NONE << WPSHIFT))
-#define OMAP_TIMER_CAPTURE_REG          (_OMAP_TIMER_CAPTURE_OFFSET \
-                                                  | (WP_NONE << WPSHIFT))
-#define OMAP_TIMER_IF_CTRL_REG          (_OMAP_TIMER_IF_CTRL_OFFSET \
-                                                 | (WP_NONE << WPSHIFT))
-#define OMAP_TIMER_CAPTURE2_REG         (_OMAP_TIMER_CAPTURE2_OFFSET \
-                                                        | (WP_NONE << WPSHIFT))
-#define OMAP_TIMER_CTRL_GPOCFG          (1 << 14)
-#define OMAP_TIMER_CTRL_CAPTMODE        (1 << 13)
-#define OMAP_TIMER_CTRL_PT              (1 << 12)
 #define OMAP_TIMER_CTRL_TRG_OVERFLOW    (0x1 << 10)
 #define OMAP_TIMER_CTRL_TRG_MATCH       (0x2 << 10)
-#define OMAP_TIMER_CTRL_TCM_LOWTOHIGH   (0x1 << 8)
-#define OMAP_TIMER_CTRL_TCM_HIGHTOLOW   (0x2 << 8)
-#define OMAP_TIMER_CTRL_TCM_BOTHEDGES   (0x3 << 8)
-#define OMAP_TIMER_CTRL_SCPWM           (1 << 7)
-#define OMAP_TIMER_CTRL_CE              (1 << 6) /* compare enable */
-#define OMAP_TIMER_CTRL_PRE             (1 << 5) /* prescaler enable */
-#define OMAP_TIMER_CTRL_PTV_SHIFT       2 /* prescaler value shift */
-#define OMAP_TIMER_CTRL_POSTED          (1 << 2)
-#define OMAP_TIMER_CTRL_AR              (1 << 1) /* auto-reload enable */
-#define OMAP_TIMER_CTRL_ST              (1 << 0) /* start timer */
-#define OMAP34XX_PADCONF_START	        0x48002030
-#define OMAP34XX_PADCONF_SIZE	        0x05cc
 #define PREFIX "OMAP_CAPTURE: "
 #define CAPTURE_IOC_MAGIC ';'
 #define CAPTURE_IOCX_READ          _IO(CAPTURE_IOC_MAGIC, 0)
 
-
-/*
- * IEN  - Input Enable
- * IDIS - Input Disable
- * PTD  - Pull type Down
- * PTU  - Pull type Up
- * DIS  - Pull type selection is inactive
- * EN   - Pull type selection is active
- * M0   - Mode 0
- */
-#define IEN     (1 << 8)
-#define IDIS    (0 << 8)
-#define PTU     (1 << 4)
-#define PTD     (0 << 4)
-#define EN      (1 << 3)
-#define DIS     (0 << 3)
-
 // default pin for capture
-static int  capture_pin=147;
+static int  capture_pin=144;
 module_param(capture_pin, int, 0644);
-MODULE_PARM_DESC(capture_pin, "The pin number to be used as a capture input.  Must be one of 144,145,146,147. Default is 147");
+MODULE_PARM_DESC(capture_pin, "The pin number to be used as a capture input.  Must be one of 144,145,146,147. Default is 144");
 static int setup_pulse_width_capture(void);
 static int setup_frequency_capture(void);
 static ssize_t omap_capture_write(struct file *filp, const char __user *buff, size_t count, loff_t *offp);
@@ -160,18 +104,6 @@ struct omap_capture_user_parms {
 };
 
 static struct omap_capture_data *the_capture;
-
-struct omap_dm_timer {
-  unsigned long phys_base;
-  int irq;
-#ifdef CONFIG_ARCH_OMAP2PLUS
-  struct clk *iclk, *fclk;
-#endif
-  void __iomem *io_base;
-  unsigned reserved:1;
-  unsigned enabled:1;
-  unsigned posted:1;
-};
 
 static irqreturn_t omap_capture_irq_handler(int irq, void *_capture)
 {
